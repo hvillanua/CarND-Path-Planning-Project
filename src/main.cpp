@@ -1,13 +1,15 @@
-#include <fstream>
 #include <math.h>
 #include <uWS/uWS.h>
 #include <chrono>
 #include <iostream>
 #include <thread>
 #include <vector>
+
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
+#include "vehicle.h"
+#include "main.h"
 
 using namespace std;
 
@@ -163,18 +165,20 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+vector<double> map_waypoints_x;
+vector<double> map_waypoints_y;
+vector<double> map_waypoints_s;
+
 int main() {
   uWS::Hub h;
 
   // Load up map values for waypoint's x,y,s and d normalized normal vectors
-  vector<double> map_waypoints_x;
-  vector<double> map_waypoints_y;
-  vector<double> map_waypoints_s;
+
   vector<double> map_waypoints_dx;
   vector<double> map_waypoints_dy;
 
   // Waypoint map to read from
-  string map_file_ = "../data/highway_map.csv";
+  string map_file_ = "../../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
   double max_s = 6945.554;
 
@@ -200,7 +204,9 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  Vehicle prev_veh;
+
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &prev_veh](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -234,16 +240,44 @@ int main() {
           	double end_path_s = j[1]["end_path_s"];
           	double end_path_d = j[1]["end_path_d"];
 
+
+            int lane = -1;
+            if (car_d > 0 && car_d < 4){
+              lane = 0;
+            }
+            else if (car_d >= 4 && car_d < 8){
+              lane = 1;
+            }
+            else if (car_d >= 8 && car_d < 12){
+              lane = 2;
+            }
+            Vehicle vehicle;
+            if (prev_veh.lane == -1){
+              vehicle = Vehicle(lane, car_x, car_y, car_yaw, car_s, car_d, car_speed, 0.0);
+            }
+            else{
+              vehicle = Vehicle(lane, car_x, car_y, car_yaw, car_s, car_d, car_speed, prev_veh.ref_vel);
+            }
+
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
+
+          	unsigned int num_steps = 50;
+          	auto predictions = vehicle.sensor_close_by_cars(sensor_fusion, num_steps);
+
+          	//vector<vector<double>> trajectory = vehicle.general_trajectory(num_steps, predictions, previous_path_x, previous_path_y);
+          	vector<vector<double>> trajectory = vehicle.choose_next_state(num_steps, predictions, previous_path_x, previous_path_y);
+
+          	prev_veh = vehicle;
 
           	json msgJson;
 
           	vector<double> next_x_vals;
           	vector<double> next_y_vals;
 
+          	next_x_vals = trajectory[0];
+          	next_y_vals = trajectory[1];
 
-          	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
